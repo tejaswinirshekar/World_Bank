@@ -2,12 +2,20 @@ from flask import Flask, render_template, request
 import requests
 import pandas as pd
 import plotly.express as px
+import plotly.io as pio
 
 app = Flask(__name__)
 
 CONTINENTS = [
     "East Asia & Pacific", "Europe & Central Asia", "Latin America & Caribbean",
     "Middle East & North Africa", "North America", "South Asia", "Sub-Saharan Africa"
+]
+
+INDICATORS = [
+    ("NY.GDP.PCAP.CD", "GDP per Capita (current US$)"),
+    ("SP.POP.TOTL", "Total Population"),
+    ("SL.UEM.TOTL.ZS", "Unemployment (% of labor force)"),
+    ("SP.DYN.LE00.IN", "Life Expectancy at Birth (years)")
 ]
 
 @app.route("/")
@@ -44,25 +52,37 @@ def country_detail(code):
     data = response.json()[1][0]
     return render_template("country.html", country=data)
 
-@app.route("/country/<code>/graph")
-def graph(code):
-    indicator = request.args.get("indicator", "NY.GDP.PCAP.CD")
-    url = f"http://api.worldbank.org/v2/country/{code}/indicator/{indicator}?format=json&per_page=100"
-    response = requests.get(url)
+@app.route("/country/<country_id>/graph")
+def country_graphs(country_id):
+    graphs = []
 
-    if response.status_code != 200 or not response.json()[1]:
-        return "Data not found", 404
+    for code, label in INDICATORS:
+        url = f"http://api.worldbank.org/v2/country/{country_id.lower()}/indicator/{code}?format=json&per_page=100"
+        response = requests.get(url)
 
-    data = response.json()[1]
-    df = pd.DataFrame(data)
-    df = df[["date", "value"]].dropna()
-    df["date"] = pd.to_datetime(df["date"])
-    df.sort_values("date", inplace=True)
+        if response.status_code != 200:
+            continue
 
-    fig = px.line(df, x="date", y="value", title=f"{indicator} for {code.upper()}")
-    graph_html = fig.to_html(full_html=False)
+        data = response.json()
+        if len(data) < 2 or not data[1]:
+            continue
 
-    return render_template("graph.html", graph_html=graph_html, country_code=code.upper())
+        df = pd.DataFrame(data[1])
+        df = df[["date", "value"]].dropna()
+        if df.empty:
+            continue
+
+        df["date"] = pd.to_datetime(df["date"])
+        df.sort_values("date", inplace=True)
+
+        fig = px.line(df, x="date", y="value", title=f"{label} for {country_id.upper()}")
+        graph_html = pio.to_html(fig, full_html=False)
+        graphs.append((label, graph_html))
+
+    if not graphs:
+        return f"<h3>No indicator data found for country {country_id.upper()}</h3>"
+
+    return render_template("graphs_multi.html", country_code=country_id.upper(), graphs=graphs)
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
